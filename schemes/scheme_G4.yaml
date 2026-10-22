@@ -1,0 +1,77 @@
+# ============================================================
+# LTX-2.5 方案 G4：GGUF Q4_K_M 低配档
+# ------------------------------------------------------------
+# M4-T4.2 新增。与 G8 档共用 ltxv 原生两阶段蒸馏管线
+# （ltxv_native.py，blocks 分时加载），仅 transformer 权重
+# 换为 Q4_K_M 量化（~15.7GB vs Q8_0 的 23.6GB）。
+#
+# 适用硬件：≥16GB 显存（blocks 分时加载下 Q4 权重 + 激活峰值）
+# 优势：下载量与显存占用最低的 GPU 档；质量比 G8 略降
+#       （Q4_K_M 对 22B DiT 仍有较好保真度）
+# 劣势：质量低于 I8/G8 档；dequantize 后 FP16 磁盘缓存
+#       仍为 ~44GB（GGUFTransformerBuilder cache 机制）
+#
+# 字段契约：engines/ltx25_video_b9c4d2e1/scheme_manager.py SchemeConfig
+# ============================================================
+
+scheme: G4
+name: GGUF Q4_K_M 低配档
+description: 社区 GGUF Q4_K_M 量化权重（Abiray 仓库，非 gated 免 Token 下载），transformer Q4_K_M ~15.7GB，ltxv 原生管线（与 G8 档同架构，blocks 分时加载）。质量略低于 G8/I8 档，适合显存/磁盘预算有限的低配场景
+
+# ===== 显存需求 =====
+vram_required: 16GB
+
+# ===== 模型来源（transformer 为 GGUF 单文件）=====
+model_repo: Abiray/LTX-2.5-Distilled-GGUF
+# model_subdir 指向 GGUF 目录；ComfyUI 组件在 comfyui_format/，
+# 双路径拼接由 wrapper 处理（§7.1.6 双路径特例）
+model_subdir: gguf_format
+
+# ===== 精度标签 =====
+precision: gguf_q4_k_m
+
+# ===== 下载量估算（GB，GGUF 15.7 + ComfyUI 组件 ~29.1）=====
+size_gb: 45
+
+# ===== CPU offload 级别 =====
+# L1: enable_model_cpu_offload（transformer Q4_K_M 常驻 GPU，
+#     TE 编码完后回 CPU）
+offload_level: L1
+
+# ===== 推理设备 =====
+device: cuda:0
+
+# ===== 量化配置 =====
+# type=gguf_q4：GGUFTransformerBuilder 走 gguf.dequantize
+#              通用反量化（Q4_K_M → FP16 计算）
+quantization:
+  type: gguf_q4
+  compute_dtype: float16
+
+# ===== BlockSwap（低显存卡可开启以进一步降压）=====
+block_swap:
+  enabled: false
+  swap_blocks: 20
+  swap_strategy: even
+
+# ===== VAE tiling（默认关闭，低显存卡建议开启）=====
+vae_tiling:
+  enabled: false
+  tile_size: 256
+
+# ===== 推理参数（distilled 约束，与 G8 档一致）=====
+# num_inference_steps 固定 8（蒸馏版）
+# guidance_scale 固定 1.0（CFG=1，负向提示词无效）
+# 分辨率需被 32 整除（VAE 空间压缩 32×）
+inference:
+  num_inference_steps: 8
+  scheduler: flow_match
+  sampler: euler
+  guidance_scale: 1.0
+  default_resolution: 960x544
+  default_fps: 24
+  default_duration: 5
+
+# ===== 适用 variant（与 manifest.yaml variants[].schemes 双向对应）=====
+applicable_variants:
+  - LTX/LTX-2.5-GGUF-Q4

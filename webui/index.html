@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LTX-2.5 视频生成引擎</title>
+<link rel="stylesheet" href="style.css?v=3">
+</head>
+<body>
+<header class="topbar">
+  <h1>LTX-2.5 <span class="sub">视频生成引擎</span></h1>
+  <div class="engine-state">
+    <span id="state-badge" class="badge">未连接</span>
+    <span id="state-detail" class="state-detail">—</span>
+    <button id="btn-refresh-status" class="btn btn-ghost" title="刷新引擎状态">刷新</button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ============ 左列：设置区 + 参数区 ============ -->
+  <div class="left-col">
+
+    <!-- ◆ 设置区 -->
+    <section class="panel panel-settings" id="panel-settings">
+      <h2>⚙ 设置</h2>
+
+      <div class="field-row">
+        <label>生成模式</label>
+        <div class="seg" id="mode-seg">
+          <!-- 模式按钮由 app.js 根据 /capabilities 动态生成 -->
+        </div>
+      </div>
+
+      <div class="field-row">
+        <label>量化方案</label>
+        <select id="scheme-select">
+          <option value="">（获取中…）</option>
+        </select>
+        <button id="btn-scheme-save" class="btn btn-secondary" title="保存当前方案为默认">存默认</button>
+      </div>
+      <div class="hint" id="scheme-desc">—</div>
+
+      <div class="field-row" style="margin-top:10px">
+        <label>模型变体</label>
+        <select id="variant-select">
+          <option value="">（获取中…）</option>
+        </select>
+      </div>
+      <div class="field-row">
+        <label>CPU Offload</label>
+        <select id="offload-select">
+          <option value="auto">auto（自动）</option>
+          <option value="L0">L0 - 全 GPU（≥80GB）</option>
+          <option value="L1">L1 - TE 卸载（≥48GB）</option>
+          <option value="L2">L2 - 层级别（≥24GB）</option>
+          <option value="L3">L3 - 激进（&lt;24GB）</option>
+        </select>
+      </div>
+      <div class="field-row">
+        <label>&nbsp;</label>
+        <div style="display:flex;gap:8px">
+          <button id="btn-load" class="btn btn-secondary">加载模型</button>
+          <button id="btn-unload" class="btn btn-danger">卸载模型</button>
+        </div>
+      </div>
+      <div class="hint" id="mode-hint">
+        T2V 文生视频：仅根据文本描述生成视频（distilled 8 步蒸馏版，v1 无音频）
+      </div>
+    </section>
+
+    <!-- ◆ 参数区 -->
+    <section class="panel panel-params" id="panel-params">
+      <h2>🎛 参数</h2>
+
+      <!-- 多图条件上传区（I2V / 首尾帧 / 多图 / 多宫格 通用） -->
+      <div class="field mode-field" id="images-field" style="display:none">
+        <label>条件图片 <span class="req" id="images-req-label"></span></label>
+        <!-- 多图卡片列表（动态生成） -->
+        <div class="image-cards" id="image-cards">
+          <!-- 每张图一个卡片：角色标签 + 拖拽上传区 + 删除按钮 -->
+        </div>
+        <div class="hint" id="images-hint"></div>
+      </div>
+
+      <div class="field">
+        <label for="prompt-input" id="prompt-label">正向提示词 <span class="req">（必填）</span></label>
+        <textarea id="prompt-input" rows="3" placeholder="如：一只金毛犬在海边奔跑，夕阳西下，电影级运镜…"></textarea>
+      </div>
+      <div class="field">
+        <label for="negative-input">负向提示词 <span class="hint-inline">（distilled CFG=1，当前无效）</span></label>
+        <input type="text" id="negative-input" placeholder="dev 版预留，distilled 版忽略">
+      </div>
+
+      <!-- 视频参数（网格布局） -->
+      <div class="adv-grid">
+        <div class="field">
+          <label for="duration-range">视频时长 <span class="val" id="duration-val">5s</span></label>
+          <input type="range" id="duration-range" min="1" max="10" step="1" value="5">
+          <span class="hint">最长 10 秒（帧数自动对齐 8k+1）</span>
+          <label class="check-row" for="auto-duration-check" title="DurationHead 按提示词预测自然时长（仅 G8 档生效，文件缺失时自动降级）">
+            <input type="checkbox" id="auto-duration-check">
+            自动时长（按提示词预测）
+          </label>
+        </div>
+        <div class="field">
+          <label for="fps-select">帧率</label>
+          <select id="fps-select">
+            <option value="24" selected>24 fps</option>
+            <option value="25">25 fps</option>
+            <option value="30">30 fps</option>
+            <option value="48">48 fps</option>
+            <option value="50">50 fps</option>
+          </select>
+          <span class="hint" id="fps-hint">高帧率 48/50 时长上限 10s</span>
+        </div>
+        <div class="field adv-grid-span">
+          <label>分辨率</label>
+          <div class="size-presets" id="size-presets">
+            <button class="preset" data-w="768" data-h="768">1:1 · 768²</button>
+            <button class="preset active" data-w="1024" data-h="576">16:9 · 1024×576</button>
+            <button class="preset" data-w="1280" data-h="704">16:9 · 1280×704</button>
+            <button class="preset" data-w="1920" data-h="1088">16:9 · 1920×1088</button>
+            <button class="preset" data-w="576" data-h="1024">9:16 · 576×1024</button>
+            <button class="preset" data-w="960" data-h="704">4:3 · 960×704</button>
+            <button class="preset" data-w="704" data-h="960">3:4 · 704×960</button>
+          </div>
+          <div class="size-inputs">
+            <input type="number" id="width-input" min="64" max="2048" step="64" value="1024" title="宽度（自动对齐 64 的倍数）">
+            <span>×</span>
+            <input type="number" id="height-input" min="64" max="2048" step="64" value="576" title="高度（自动对齐 64 的倍数）">
+            <button id="btn-swap-size" class="btn btn-ghost" type="button" title="宽高互换">⇄</button>
+          </div>
+          <span class="hint">预设满足两阶段 64 整除（一阶段半分辨率 32 整除）；自定义输入自动对齐到 64 的倍数</span>
+        </div>
+        <div class="field">
+          <label>推理步数</label>
+          <input type="number" id="steps-input" value="8" disabled title="distilled 蒸馏版固定 8 步">
+          <span class="hint">distilled 固定 8 步</span>
+        </div>
+        <div class="field">
+          <label>CFG 引导</label>
+          <input type="number" id="guidance-input" value="1.0" step="0.5" disabled title="distilled CFG 固定 1.0">
+          <span class="hint">distilled 固定 1.0</span>
+        </div>
+        <div class="field">
+          <label for="seed-input">随机种子</label>
+          <input type="number" id="seed-input" value="-1" min="-1" title="-1 = 随机">
+        </div>
+      </div>
+
+      <div class="hint" style="margin-top:4px">
+        LTX-2.5 distilled 硬约束：两阶段分辨率被 64 整除 · 帧数 8k+1 · 8 步 · CFG=1 · 时长 ≤10s
+      </div>
+    </section>
+  </div>
+
+  <!-- ============ 右列：结果区 ============ -->
+  <div class="right-col">
+
+    <!-- ◆ 结果区 -->
+    <section class="panel panel-result" id="panel-result">
+      <h2>🎬 生成结果</h2>
+
+      <div class="gen-bar">
+        <button id="btn-generate" class="btn btn-primary btn-large">生成视频</button>
+        <div class="progress-wrap" id="progress-wrap" style="display:none">
+          <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+          <span class="progress-text" id="progress-text">准备中…</span>
+        </div>
+      </div>
+
+      <div class="error-box" id="error-box" style="display:none">
+        <button class="err-close" onclick="this.parentElement.style.display='none'">×</button>
+        <pre id="error-text"></pre>
+      </div>
+
+      <div class="result-view result-view-video" id="result-view">
+        <p class="placeholder">生成的视频将显示在这里</p>
+      </div>
+
+      <div class="result-meta" id="result-meta"></div>
+    </section>
+  </div>
+</main>
+
+<footer class="footer">
+  LTX-2.5 Video Engine · 四档量化（FP16 / INT8 / GGUF-Q8_0 / GGUF-Q4_K_M）· 引擎直连模式（/ui → 7008）
+</footer>
+
+<script src="app.js?v=4"></script>
+</body>
+</html>

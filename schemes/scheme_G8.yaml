@@ -1,0 +1,75 @@
+# ============================================================
+# LTX-2.5 方案 G8：GGUF Q8_0 社区档
+# ------------------------------------------------------------
+# transformer 用 LTX2VideoTransformer3DModel.from_single_file() 加载
+# GGUF Q8_0 文件（GGUFQuantizationConfig），共享组件（TE/VAE/配置）
+# 仍来自 diffusers_format/ 目录（双路径特例，wrapper 处理拼接）。
+#
+# 适用硬件：≥24GB 显存
+# 优势：Abiray 仓库非 gated，免 HF Token 下载（F16/I8 档的
+#       Lightricks 仓库为 gated，需接受协议 + Token）
+#
+# 字段契约：engines/ltx25_video_b9c4d2e1/scheme_manager.py SchemeConfig
+# ============================================================
+
+scheme: G8
+name: GGUF Q8_0 社区档
+description: 社区 GGUF 量化权重（Abiray 仓库，非 gated 免 Token 下载），transformer Q8_0 ~23.6GB，from_single_file 加载 + 共享组件走 diffusers 目录。质量与 I8 档接近，适合不想配置 HF Token 的场景
+
+# ===== 显存需求 =====
+vram_required: 24GB
+
+# ===== 模型来源（transformer 为 GGUF 单文件）=====
+model_repo: Abiray/LTX-2.5-Distilled-GGUF
+# model_subdir 指向 GGUF 目录；共享组件在 diffusers_format/，
+# 双路径拼接由 wrapper 处理（§7.1.6 双路径特例）
+model_subdir: gguf_format
+
+# ===== 精度标签 =====
+precision: gguf_q8_0
+
+# ===== 下载量估算（GB，GGUF 23.6 + 共享组件 ~30.6）=====
+size_gb: 54
+
+# ===== CPU offload 级别 =====
+# L1: enable_model_cpu_offload（transformer Q8_0 常驻 GPU，
+#     TE 编码完后回 CPU）
+offload_level: L1
+
+# ===== 推理设备 =====
+device: cuda:0
+
+# ===== 量化配置 =====
+# type=gguf_q8：GGUFQuantizationConfig(compute_dtype=float16) +
+#              from_single_file 加载 Q8_0 权重
+quantization:
+  type: gguf_q8
+  compute_dtype: float16
+
+# ===== BlockSwap（48G 卡显存充足，关闭）=====
+block_swap:
+  enabled: false
+  swap_blocks: 20
+  swap_strategy: even
+
+# ===== VAE tiling（默认关闭，低显存卡建议开启）=====
+vae_tiling:
+  enabled: false
+  tile_size: 256
+
+# ===== 推理参数（distilled 约束）=====
+# num_inference_steps 固定 8（蒸馏版）
+# guidance_scale 固定 1.0（CFG=1，负向提示词无效）
+# 分辨率需被 32 整除（VAE 空间压缩 32×）
+inference:
+  num_inference_steps: 8
+  scheduler: flow_match
+  sampler: euler
+  guidance_scale: 1.0
+  default_resolution: 960x544
+  default_fps: 24
+  default_duration: 5
+
+# ===== 适用 variant（与 manifest.yaml variants[].schemes 双向对应）=====
+applicable_variants:
+  - LTX/LTX-2.5-GGUF-Q8

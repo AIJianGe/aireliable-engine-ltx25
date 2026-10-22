@@ -1,0 +1,71 @@
+# ============================================================
+# LTX-2.5 方案 F16：FP16 高精度档（Turing 适配）
+# ------------------------------------------------------------
+# BF16 权重运行时 cast 为 FP16 加载完整 pipeline（数值无损，
+# Turing SM 7.5 不支持 BF16，FP16 是最高可用精度）。
+#
+# 适用硬件：≥48GB 显存（transformer fp16 ~35GB + TE 编码峰值）
+# 加载路径：LTX2Pipeline.from_pretrained(diffusers_format/, torch_dtype=float16)
+#           + enable_model_cpu_offload()（L1：TE 编码完后回 CPU）
+#
+# 字段契约：engines/ltx25_video_b9c4d2e1/scheme_manager.py SchemeConfig
+# ============================================================
+
+scheme: F16
+name: FP16 高精度档（Turing 适配）
+description: BF16 权重运行时 cast 为 FP16 加载完整 pipeline（数值无损）。transformer 以 FP16 常驻 GPU（~35GB），TE 编码完后卸载到 CPU。需 ≥48GB 显存，Quadro RTX 8000 全量可跑
+
+# ===== 显存需求 =====
+vram_required: 48GB
+
+# ===== 模型来源 =====
+model_repo: Lightricks/LTX-2.5-Diffusers
+model_subdir: diffusers_format
+
+# ===== 精度标签 =====
+precision: fp16
+
+# ===== 下载量估算（GB，transformer 8 分片套 ~35.4 + 共享组件 ~30.6）=====
+size_gb: 66
+
+# ===== CPU offload 级别 =====
+# L1: enable_model_cpu_offload（组件级 offload，TE 编码完后回 CPU，
+#     transformer + VAE 常驻 GPU，48G 卡标准配置）
+offload_level: L1
+
+# ===== 推理设备 =====
+device: cuda:0
+
+# ===== 量化配置 =====
+# type=none：不做量化，BF16 权重直接以 compute_dtype=FP16 加载
+quantization:
+  type: none
+  compute_dtype: float16
+
+# ===== BlockSwap（48G 卡显存充足，关闭）=====
+block_swap:
+  enabled: false
+  swap_blocks: 20
+  swap_strategy: even
+
+# ===== VAE tiling（48G 卡显存充足，关闭；1080p 解码峰值 >8GB 时可手动开）=====
+vae_tiling:
+  enabled: false
+  tile_size: 256
+
+# ===== 推理参数（distilled 约束）=====
+# num_inference_steps 固定 8（蒸馏版）
+# guidance_scale 固定 1.0（CFG=1，负向提示词无效）
+# 分辨率需被 32 整除（VAE 空间压缩 32×）
+inference:
+  num_inference_steps: 8
+  scheduler: flow_match
+  sampler: euler
+  guidance_scale: 1.0
+  default_resolution: 960x544
+  default_fps: 24
+  default_duration: 5
+
+# ===== 适用 variant（与 manifest.yaml variants[].schemes 双向对应）=====
+applicable_variants:
+  - LTX/LTX-2.5-Diffusers

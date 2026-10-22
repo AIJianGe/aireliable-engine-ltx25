@@ -1,0 +1,538 @@
+# ============================================================
+# LTX-2.5 Video 引擎 manifest（v0.1，四档量化版）
+# ------------------------------------------------------------
+# v0.1 设计（LTX25_ENGINE_INTEGRATION_ANALYSIS.md §7.2）：
+#   - paradigm: integrated（完全自定义模式，继承 CustomEngine）
+#   - 模型布局：video/ltx25/（diffusers_format/ + gguf_format/ + comfyui_format/ 三子目录）
+#   - 能力：text-to-video（T2V / I2V）
+#   - 四档量化方案（Quadro RTX 8000 / Turing SM 7.5 适配，无 BF16/FP8）：
+#       * F16：FP16 高精度档（BF16 权重运行时 cast 为 FP16，数值无损）
+#       * I8 ：torchao INT8 均衡档（推荐默认，~19GB 显存）
+#       * G8 ：GGUF Q8_0 社区档（ltxv 原生管线，见 ltxv_native.py）
+#       * G4 ：GGUF Q4_K_M 低配档（M4-T4.2 新增，~15.7GB，与 G8 同管线）
+#
+# 字段规范详见 PR/development-guide.md §30 manifest.yaml v0.2 规范
+# 校验逻辑见 core/src/core/manifest_schema.py
+#
+# ⚠️ gated 仓库警告：
+#   Lightricks/LTX-2.5-Diffusers 是 gated 仓库（需在 HuggingFace 接受
+#   LTX-2 Community License 协议并配置 HF Token 才能下载）。
+#   平台侧 Token 配置见 T2.5（core 下载器 Authorization 头支持）。
+#   Abiray/LTX-2.5-Distilled-GGUF 为社区镜像（非 gated，可直接下载）。
+#
+# 模型目录结构（双子目录并存）：
+#   models/video/ltx25/
+#     ├── diffusers_format/                 ← Diffusers 格式（F16 / I8 档用）
+#     │   ├── model_index.json               ← 标志文件（shared-components 下载入口）
+#     │   ├── modular_model_index.json
+#     │   ├── transformer/                   ← distilled DiT（22B，BF16，~37.98GB/套）
+#     │   │   ├── config.json
+#     │   │   ├── diffusion_pytorch_model.safetensors.index.json
+#     │   │   └── diffusion_pytorch_model-0000X-of-00004.safetensors（4 分片，index.json 实际引用套）
+#     │   ├── text_encoder/                  ← Gemma4 12B TE（~22.3GB，5 分片）
+#     │   ├── tokenizer/                      ← Gemma4 tokenizer
+#     │   ├── processor/                      ← LTX2 processor（可选组件）
+#     │   ├── vae/                            ← 视频 VAE（1.45GB）
+#     │   ├── audio_vae/                      ← 音频 VAE（106MB）
+#     │   ├── vocoder/                        ← LTX2 vocoder（258MB）
+#     │   ├── connectors/                     ← 文本连接器（6.34GB，2 分片）
+#     │   └── duration_head/                 ← 时长预测头（3.8MB，可选组件）
+#     ├── comfyui_format/                     ← ComfyUI 格式组件（G8 档 ltxv 原生管线用）
+#     │   ├── text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors（24.5GiB）
+#     │   ├── vae/ltx-2.5-video-vae-conv-bf16.safetensors（1.45GB）
+#     │   ├── vae/ltx-2.5-audio-vae-bf16.safetensors（365MB）
+#     │   └── latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors（996MB）
+#     └── gguf_format/                        ← GGUF 格式（G8 / G4 档用）
+#         ├── transformer-Q8_0.gguf          ← GGUF Q8_0 量化权重（23.6GB）
+#         └── transformer-Q4_K_M.gguf        ← GGUF Q4_K_M 量化权重（15.7GB，M4-T4.2）
+#
+# 分片裁决说明（v2，2026-08-28 实测修正，推翻 2026-08-26 初版裁决）：
+#   初版裁决"4/8 分片为同一权重的重复分片"有误。实测（F16 档加载触发）：
+#     - index.json（446KB）的 weight_map 实际引用 4 分片套（-0000X-of-00004）；
+#     - 8 分片套缺 keyframes_abs_pos_embedding 参数（4090 vs 4091 键），
+#       而 transformer/config.json 要求 use_keyframes_abs_pos_embedding=true
+#       → 8 分片套是与 index/config 不配套的另一版本，不可用；
+#     - from_pretrained 按 index.json 找 4 分片，缺失报错。
+#   key_files 改声明 4 分片套（9.93+9.92+9.99+8.14GB，ModelScope 匿名可下）。
+#   历史 8 分片套（35.4GB）已从本地删除腾出空间。
+# ============================================================
+
+# ===== v0.1 必需字段 =====
+engine_id: ltx25_video_b9c4d2e1
+engine_name: LTX-2.5 Video
+engine_version: 0.1.0
+aireliable_compat: ">=0.0.16"
+uv_env_name: video-ltx25
+export_mode: source
+
+# ===== v0.1 可选字段 =====
+description: "LTX-2.5 视频生成引擎（Lightricks 22B 双流 DiT，原生音视频同步生成；四档量化：FP16 / INT8 / GGUF-Q8_0 / GGUF-Q4_K_M，Turing SM 7.5 适配）"
+
+# ===== v0.2 新增字段 =====
+engine_uid: aireliable://aijiange/video/ltx25_video_b9c4d2e1
+paradigm: integrated
+sdk_version: ">=0.3.0"
+
+# 作者信息（v0.2.7：author 指创建引擎的作者）
+author:
+  name: AI剑歌
+
+# 第三方开源引用（v0.2.7 新增）
+third_party_references:
+  - name: LTX-2.5
+    author: Lightricks
+    github: https://github.com/Lightricks/LTX-2
+    website: https://huggingface.co/Lightricks/LTX-2.5
+    license: LTX-2 Community License
+    description: 引擎核心视频生成（文本/图像生成视频 + 原生音视频同步）能力来自 Lightricks 的 LTX-2.5 模型
+  - name: LTX-2.5-Distilled-GGUF
+    author: Abiray
+    github: https://huggingface.co/Abiray/LTX-2.5-Distilled-GGUF
+    website: https://huggingface.co/Abiray/LTX-2.5-Distilled-GGUF
+    license: LTX-2 Community License
+    description: GGUF 量化版（G8/G4 档使用，源自 Lightricks/LTX-2.5 distilled 权重的社区量化）
+
+# 来源信息
+source:
+  type: github
+  github_repo: Lightricks/LTX-2
+  branch: main
+
+# 升级信息
+upgrade:
+  check_url: https://api.github.com/repos/Lightricks/LTX-2/releases/latest
+  auto_check: false
+
+# 节点包依赖（integrated 范式不依赖节点包）
+node_packages: []
+
+# ============================================================
+# v0.2.5+ 引擎环境配置（env_config 块）
+# 供 EngineEnvManager 读取以决定是否检测 torch、默认 CUDA 版本等。
+# 字段规范详见 core/src/core/manifest_schema.py EnvConfigSchema
+#
+# LTX-2.5 基于 torch 执行 GPU 视频生成推理，依赖：
+#   - diffusers>=0.40.0（LTX2Pipeline / LTX2VideoTransformer3DModel /
+#     AutoencoderKLLTX2Video / GGUFQuantizationConfig 最低版本）
+#   - torchao（INT8 量化，Turing sm_75 已验证）
+#   - transformers>=4.57（Gemma4 TE 支持）
+# ============================================================
+env_config:
+  requires_torch: true
+  torch_version_constraint: '>=2.5.0'
+  default_cuda_version: cu128
+  supported_cuda_versions:
+    - cu121
+    - cu124
+    - cu126
+    - cu128
+  requires_python: '>=3.10,<3.13'
+  notes: 'LTX-2.5 基于 torch 执行 GPU 视频生成推理（diffusers 0.40.0+），支持 CPU offload 分级卸载与三档量化（FP16/INT8/GGUF-Q8_0）'
+  # v0.2.12+ 引擎推荐版本组合：切换 torch 时优先使用此组合
+  # 与 envs/video-ltx25/pyproject.toml 保持一致（T1.1 验证通过的实际版本）
+  recommended_versions:
+    torch: '2.11.0'
+    torchvision: '0.26.0'
+    torchaudio: '2.11.0'
+    reason: 'LTX-2.5 引擎环境（envs/video-ltx25）实测通过的稳定版本组合（cu128 index，Turing sm_75 兼容已验证）'
+  # CPU offload 配置（大模型分级卸载，降低显存占用）
+  # 规范：development-guide.md §37.2.7 CPU Offload 等级规范
+  # 阈值必须与引擎 config.py _OFFLOAD_VRAM_THRESHOLDS 保持一致
+  # L0: 全 GPU（所有模型常驻 GPU，需 ≥80GB 显存）
+  # L1: Text Encoder 卸载（TE 编码完后移到 CPU，Transformer+VAE 常驻 GPU，需 ≥48GB 显存）
+  # L2: 层级别 offload（Transformer 每层按需搬入 GPU，需 ≥24GB 显存，慢 3-5×）
+  # L3: 激进 offload（全部模型在 CPU，仅计算时搬入 + VAE tiling，慢 10×+）
+  cpu_offload:
+    supported: true
+    default_level: auto
+    levels:
+      L0:
+        name: "全 GPU"
+        description: "所有模型常驻 GPU，速度最快"
+        min_vram_gb: 80
+      L1:
+        name: "Text Encoder 卸载"
+        description: "TE 编码完后移到 CPU，Transformer+VAE 常驻 GPU"
+        min_vram_gb: 48
+      L2:
+        name: "层级别 offload"
+        description: "Transformer 每层按需搬入 GPU，速度慢 3-5 倍"
+        min_vram_gb: 24
+      L3:
+        name: "激进 offload"
+        description: "全部模型在 CPU，仅计算时搬入，速度慢 10 倍+"
+        min_vram_gb: 0
+
+# ============================================================
+# v0.2.1 新增：models 块（模型分类规范化）
+# 详见 PR/architecture.md §16.4 manifest.models 块
+#
+# v0.1 四档量化架构（路线 1：variant = 文件实体 × scheme = 加载策略）：
+#   - 3 个变体：diffusers 格式（F16/I8 档）/ GGUF Q8 格式（G8 档）/ GGUF Q4 格式（G4 档）
+#   - 4 个方案：F16（48G 高精度）/ I8（24G 均衡推荐）/ G8（24G 社区 GGUF）/ G4（16G 低配 GGUF）
+#   - FP16/INT8 共用 diffusers 文件 → 同一 variant 下切换 scheme 零下载
+#   - GGUF Q8/Q4 各自独立 variant → 下载/删除独立管理
+# ============================================================
+models:
+  # ===== 模型目录布局 =====
+  # base 为 models_root 下的相对路径，双子目录由 variant.path 决定
+  model_layout:
+    base: video/ltx25/
+
+  # ===== 默认 variant（F16/I8 共用的 diffusers 格式，使用场景最广） =====
+  # BaseEngine.infer 的 auto-load 优先级：request.variant > default_variant > None
+  default_variant: LTX/LTX-2.5-Diffusers
+
+  # ===== 模型变体列表（3 个，按格式/量化划分） =====
+  # v0.3.6+ variant.name 必须为 author/model 格式（命名空间规范）
+  # 注意：name 必须与引擎 model_scanner.py 的 _KNOWN_VARIANTS 完全一致
+  #（variant 扫描匹配契约）
+  variants:
+    # ----- 1. diffusers 格式（F16 / I8 档用，推荐默认） -----
+    - name: LTX/LTX-2.5-Diffusers
+      alias: LTX25-Diffusers
+      base_model: LTX-2.5-distilled
+      precision: bf16                    # 磁盘为 BF16，运行时按 scheme cast 为 fp16 / int8
+      loader: diffusers
+      vram_required: 24GB                # I8 档最低显存需求（transformer int8 ~19GB）
+      path: video/ltx25/diffusers_format
+      schemes: [F16, I8]                 # 该 variant 适用的方案列表
+      model_file_ids:
+        - ltx25-transformer-bf16         # distilled transformer（marker 整仓下载）
+        - ltx25-shared-components        # 共享组件（TE/VAE/tokenizer/connectors 等）
+      uv_env: envs/video-ltx25
+
+    # ----- 2. GGUF Q8_0 格式（G8 档用） -----
+    - name: LTX/LTX-2.5-GGUF-Q8
+      alias: LTX25-GGUF-Q8_0
+      base_model: LTX-2.5-distilled
+      precision: gguf_q8_0
+      loader: gguf                       # ltxv 原生管线（ltx-pipelines blocks，见 ltxv_native.py）
+      vram_required: 24GB
+      path: video/ltx25/gguf_format
+      schemes: [G8]
+      model_file_ids:
+        - ltx25-transformer-gguf-q8      # GGUF Q8_0 单文件
+        - ltx25-comfyui-components       # Gemma/双 VAE/上采样器（ComfyUI 格式，ltxv 原生管线用）
+      uv_env: envs/video-ltx25
+
+    # ----- 3. GGUF Q4_K_M 格式（G4 档用，M4-T4.2 新增） -----
+    - name: LTX/LTX-2.5-GGUF-Q4
+      alias: LTX25-GGUF-Q4_K_M
+      base_model: LTX-2.5-distilled
+      precision: gguf_q4_k_m
+      loader: gguf                       # ltxv 原生管线（与 G8 档同架构，仅权重不同）
+      vram_required: 16GB
+      path: video/ltx25/gguf_format
+      schemes: [G4]
+      model_file_ids:
+        - ltx25-transformer-gguf-q4      # GGUF Q4_K_M 单文件
+        - ltx25-comfyui-components       # Gemma/双 VAE/上采样器（与 G8 档共用）
+      uv_env: envs/video-ltx25
+
+  # ===== 方案列表（与 schemes/ 目录的 YAML 一一对应）=====
+  # 每个方案对应 schemes/scheme_F16.yaml / scheme_I8.yaml / scheme_G8.yaml / scheme_G4.yaml
+  # 方案与 variant 通过 variants[].schemes 字段双向关联
+  # model_subdir 相对 model_dir（video/ltx25/），与引擎 scheme_manager 契约一致
+  schemes:
+    - id: F16
+      name: FP16 高精度档（Turing 适配）
+      description: BF16 权重运行时 cast 为 FP16 加载完整 pipeline（数值无损）。需 ≥48GB 显存（transformer ~35GB + TE fp16 峰值），Quadro RTX 8000 全量可跑
+      vram_required: 48GB
+      precision: fp16
+      model_repo: Lightricks/LTX-2.5-Diffusers
+      model_subdir: diffusers_format
+    - id: I8
+      name: INT8 均衡档（推荐默认）
+      description: transformer torchao int8 量化（~19GB），TE int8 常驻 GPU。48G 卡余量充足，质量近乎无损，Turing sm_75 原生支持
+      vram_required: 24GB
+      precision: int8_torchao
+      model_repo: Lightricks/LTX-2.5-Diffusers
+      model_subdir: diffusers_format
+    - id: G8
+      name: GGUF Q8_0 社区档
+      description: 社区 GGUF 量化权重（Abiray 仓库，非 gated 免 token 下载）+ ComfyUI 格式组件（Gemma/双 VAE/上采样器），ltxv 原生管线两阶段蒸馏推理（ltx-pipelines blocks，分时加载）。质量与 I8 档接近
+      vram_required: 24GB
+      precision: gguf_q8_0
+      model_repo: Abiray/LTX-2.5-Distilled-GGUF
+      model_subdir: gguf_format
+    - id: G4
+      name: GGUF Q4_K_M 低配档
+      description: 社区 GGUF Q4_K_M 量化权重（~15.7GB，Abiray 仓库免 token）+ ComfyUI 格式组件，ltxv 原生管线（与 G8 档同架构）。质量略低于 G8/I8 档，适合显存/磁盘预算有限的低配场景（M4-T4.2）
+      vram_required: 16GB
+      precision: gguf_q4_k_m
+      model_repo: Abiray/LTX-2.5-Distilled-GGUF
+      model_subdir: gguf_format
+
+  # ===== 模型文件清单（5 块：diffusers transformer / GGUF Q8 / GGUF Q4 / diffusers 共享组件 / ComfyUI 组件）=====
+  # key_files 按 HuggingFace API 真实文件列表核对填写（2026-08-26，
+  # hf-mirror 匿名 tree API + siblings expand 核对，吸取 H3 SDNQ 404 教训）
+  #
+  # 总下载量估算：
+#   diffusers transformer（4 分片套）~37.98GB + 共享组件 ~30.6GB ≈ 68.6GB（F16/I8 档）
+#   GGUF Q8_0 23.6GB + ComfyUI 组件 ~29.1GB ≈ 52.7GB（G8 档，均免 Token 可下：GGUF 走 HF/ModelScope 匿名，ComfyUI 组件走 ModelScope 镜像）
+#   GGUF Q4_K_M 15.7GB + ComfyUI 组件 ~29.1GB ≈ 44.8GB（G4 档，来源同 G8）
+  model_files:
+    # ============================================================
+    # 1. distilled transformer（Diffusers 格式，F16 / I8 档用，marker 整仓）
+    # ============================================================
+    - id: ltx25-transformer-bf16
+      role: main
+      filename: transformer/             # 标志为目录（key_file 下载时自动创建）
+      target_dir: video/ltx25/diffusers_format
+      format: marker
+      required_for: [LTX/LTX-2.5-Diffusers]
+      # v0.4.x exclusive_group：与 GGUF transformer 互斥（同一 22B DiT 的不同量化实现），
+      # 同组内任一就绪即不阻断启动（GGUF 已下载时可直接启动 G8 档，无需下载 35.4GB BF16）
+      exclusive_group: ltx25-transformer
+      source:
+          type: huggingface
+          repo_id: Lightricks/LTX-2.5-Diffusers
+          # tree URL（不含 /resolve/main/）→ marker 下载器 subdir_prefix 为空，
+          # key_files 本地路径 = 远端仓库相对路径
+          url: https://huggingface.co/Lightricks/LTX-2.5-Diffusers/tree/main/transformer
+          # v0.2.15+ mirror_url 指向 ModelScope 镜像（gated 仓库 hf-mirror 也无法匿名下载，
+          # ModelScope 有完整官方结构镜像，实测匿名可下 + Range 206 断点续传）
+          mirror_url: https://modelscope.cn/models/Lightricks/LTX-2.5-Diffusers
+      # key_files 按 index.json weight_map 实际引用的 4 分片套声明
+      # （2026-08-28 实测修正，详见本文件头部"分片裁决说明 v2"）：
+      #     - transformer/config.json（1440B）
+      #     - transformer/diffusion_pytorch_model.safetensors.index.json（446KB）
+      #     - transformer/diffusion_pytorch_model-00001-of-00004.safetensors（9.93GB）
+      #     - transformer/diffusion_pytorch_model-00002-of-00004.safetensors（9.92GB）
+      #     - transformer/diffusion_pytorch_model-00003-of-00004.safetensors（9.99GB）
+      #     - transformer/diffusion_pytorch_model-00004-of-00004.safetensors（8.14GB）
+      #   8 分片套（-0000X-of-00008）缺 keyframes_abs_pos_embedding，不配套，不声明
+      key_files:
+        - transformer/config.json
+        - transformer/diffusion_pytorch_model.safetensors.index.json
+        - transformer/diffusion_pytorch_model-00001-of-00004.safetensors
+        - transformer/diffusion_pytorch_model-00002-of-00004.safetensors
+        - transformer/diffusion_pytorch_model-00003-of-00004.safetensors
+        - transformer/diffusion_pytorch_model-00004-of-00004.safetensors
+      description: "LTX-2.5 distilled transformer（22B DiT，BF16，~37.98GB，F16/I8 档用；gated 仓库需 HF Token 或 ModelScope 镜像）"
+
+    # ============================================================
+    # 2. GGUF Q8_0 transformer（单文件，G8 档用，非 gated）
+    # ============================================================
+    - id: ltx25-transformer-gguf-q8
+      role: main
+      filename: transformer-Q8_0.gguf    # 本地落地名（与 model_scanner marker 一致）
+      target_dir: video/ltx25/gguf_format
+      format: gguf
+      size_bytes: 23604666816             # 23.6GB（hf-mirror API 核对）
+      required_for: [LTX/LTX-2.5-GGUF-Q8]
+      # v0.4.x exclusive_group：与 BF16 transformer 互斥（同上，组内任一就绪即不阻断）
+      exclusive_group: ltx25-transformer
+      source:
+          type: huggingface
+          repo_id: Abiray/LTX-2.5-Distilled-GGUF
+          # 仓库源文件名为 LTX-2.5-Distilled-Q8_0.gguf，下载后落地为 transformer-Q8_0.gguf
+          url: https://huggingface.co/Abiray/LTX-2.5-Distilled-GGUF/resolve/main/LTX-2.5-Distilled-Q8_0.gguf
+          # v0.2.15+ mirror_url 指向 ModelScope 镜像（国内速度快且匿名可下，实测 Range 206 支持断点续传）
+          mirror_url: https://modelscope.cn/models/Abiray/LTX-2.5-Distilled-GGUF/resolve/main/LTX-2.5-Distilled-Q8_0.gguf
+      description: "LTX-2.5 distilled transformer GGUF Q8_0 量化版（23.6GB，G8 档用，社区镜像免 Token）"
+
+    # ============================================================
+    # 2b. GGUF Q4_K_M transformer（单文件，G4 档用，非 gated，M4-T4.2 新增）
+    # ============================================================
+    - id: ltx25-transformer-gguf-q4
+      role: main
+      filename: transformer-Q4_K_M.gguf  # 本地落地名（与 model_scanner marker 一致）
+      target_dir: video/ltx25/gguf_format
+      format: gguf
+      size_bytes: 15687639488             # 15.7GB（hf-mirror tree API 核对，2026-08-28）
+      required_for: [LTX/LTX-2.5-GGUF-Q4]
+      # v0.4.x exclusive_group：与 BF16/Q8_0 transformer 互斥（同一 22B DiT 的不同量化实现），
+      # 同组内任一就绪即不阻断启动
+      exclusive_group: ltx25-transformer
+      source:
+          type: huggingface
+          repo_id: Abiray/LTX-2.5-Distilled-GGUF
+          # 仓库源文件名为 LTX-2.5-Distilled-Q4_K_M.gguf，下载后落地为 transformer-Q4_K_M.gguf
+          url: https://huggingface.co/Abiray/LTX-2.5-Distilled-GGUF/resolve/main/LTX-2.5-Distilled-Q4_K_M.gguf
+          # v0.2.15+ mirror_url 指向 hf-mirror（2026-08-28 实测：ModelScope 该仓库
+          # 未同步 Q4_K_M 文件，resolve 请求挂起超时；hf-mirror 实测 206 + Range 断点续传可用）
+          mirror_url: https://hf-mirror.com/Abiray/LTX-2.5-Distilled-GGUF/resolve/main/LTX-2.5-Distilled-Q4_K_M.gguf
+      description: "LTX-2.5 distilled transformer GGUF Q4_K_M 量化版（15.7GB，G4 档低配用，社区镜像免 Token；注意首次加载反量化后磁盘会生成 ~44GB fp16 cache）"
+
+    # ============================================================
+    # 3. 共享组件（TE / VAE / tokenizer / connectors 等，F16/I8 档用，marker 整仓）
+    # ============================================================
+    # LTX2Pipeline.from_pretrained 所需的全部组件（model_index.json 声明）。
+    # G8 档已改用 ComfyUI 格式组件（ltx25-comfyui-components），不再依赖本块
+    - id: ltx25-shared-components
+      role: main
+      filename: model_index.json          # 标志文件（在 key_files 中一并下载）
+      target_dir: video/ltx25/diffusers_format
+      format: marker
+      required_for: [LTX/LTX-2.5-Diffusers]  # 仅 diffusers 格式 variant（G8 档已改用 comfyui 组件，见 ltx25-comfyui-components）
+      source:
+          type: huggingface
+          repo_id: Lightricks/LTX-2.5-Diffusers
+          # 仓库根 URL（无 /resolve/main/ 子路径）→ subdir_prefix 为空
+          url: https://huggingface.co/Lightricks/LTX-2.5-Diffusers
+          mirror_url: https://hf-mirror.com/Lightricks/LTX-2.5-Diffusers
+      # key_files 按仓库真实文件列表核对（2026-08-26，siblings API 逐目录核对）：
+      #   LTX2Pipeline 必需组件（model_index.json 声明）：
+      #     - scheduler（FlowMatchEulerDiscreteScheduler）
+      #     - vae（AutoencoderKLLTX2Video，1.45GB 单文件）
+      #     - audio_vae（AutoencoderKLLTX2Audio，106MB 单文件）
+      #     - text_encoder（Gemma4 12B，5 分片 + index，~22.3GB）
+      #     - tokenizer（Gemma4，3 文件）
+      #     - connectors（LTX2TextConnectors，2 分片 + index，~6.34GB）
+      #     - vocoder（LTX2Vocoder，258MB 单文件）
+      #   可选组件（_optional_components，缺失时 diffusers 跳过加载不报错）：
+      #     - duration_head（3.8MB，小文件直接下载，num_frames 自动预测）
+      #     - processor（LTX2Processor，4 文件小体积）
+      #   未声明（v1 不需要的仓库内容）：
+      #     - prompt_enhancer（~15GB，enable_prompt_enhancement=True 才需要，
+      #       v1 默认关闭，需要时用户可手动下载）
+      #     - transformer_full/（SFT 非蒸馏版，v1 不支持）
+      #     - latent_upsampler / temporal_latent_upsampler / diffusion_decoder
+      #       （两阶段生成 / 上采样组件，v2 按需扩展）
+      #     - connectors/diffusion_pytorch_model.safetensors（6.34GB 单文件，
+      #       与 2 分片套重复，仅下载分片套）
+      #     - ltx-2.5-22b-distilled-lora-450-bf16.safetensors（根目录 LoRA，v1 不用）
+      key_files:
+        # 索引文件
+        - model_index.json
+        - modular_model_index.json
+        # transformer 架构配置（1.4KB 小文件；G8 档 from_single_file /
+        # from_pretrained 组件替换时需读取，2026-08-27 实测补充）
+        - transformer/config.json
+        # scheduler
+        - scheduler/scheduler_config.json
+        # text_encoder（Gemma4 12B，5 分片 + index）
+        - text_encoder/config.json
+        - text_encoder/generation_config.json
+        - text_encoder/model-00001-of-00005.safetensors
+        - text_encoder/model-00002-of-00005.safetensors
+        - text_encoder/model-00003-of-00005.safetensors
+        - text_encoder/model-00004-of-00005.safetensors
+        - text_encoder/model-00005-of-00005.safetensors
+        - text_encoder/model.safetensors.index.json
+        # tokenizer（Gemma4）
+        - tokenizer/chat_template.jinja
+        - tokenizer/tokenizer.json
+        - tokenizer/tokenizer_config.json
+        # processor（可选组件，小体积一并下载）
+        - processor/chat_template.jinja
+        - processor/processor_config.json
+        - processor/tokenizer.json
+        - processor/tokenizer_config.json
+        # vae（视频 VAE）
+        - vae/config.json
+        - vae/diffusion_pytorch_model.safetensors
+        # audio_vae（音频 VAE）
+        - audio_vae/config.json
+        - audio_vae/diffusion_pytorch_model.safetensors
+        # vocoder
+        - vocoder/config.json
+        - vocoder/diffusion_pytorch_model.safetensors
+        # connectors（文本连接器，2 分片 + index）
+        - connectors/config.json
+        - connectors/diffusion_pytorch_model-00001-of-00002.safetensors
+        - connectors/diffusion_pytorch_model-00002-of-00002.safetensors
+        - connectors/diffusion_pytorch_model.safetensors.index.json
+        # duration_head（可选组件，num_frames 自动预测，3.8MB 小文件）
+        - duration_head/config.json
+        - duration_head/diffusion_pytorch_model.safetensors
+      description: "LTX-2.5 共享组件（Gemma4 TE + 双 VAE + tokenizer + connectors + vocoder + duration_head，F16/I8 档用；gated 仓库需 HF Token）"
+
+    # ============================================================
+    # 4. ComfyUI 格式组件（G8 档 ltxv 原生管线用，marker 按需 4 文件）
+    # ============================================================
+    # G8 档走 ltx-pipelines blocks 原生推理（ltxv_native.py），需要
+    # Lightricks/LTX-2.5 仓库（ComfyUI 目录结构）的 4 个组件文件：
+    #   Gemma4 TE with-proj 26.3GB / video VAE(conv) 1.45GB /
+    #   audio VAE 365MB / latent spatial upsampler 996MB，共 ~29.1GB
+    # key_files 本地路径 = 远端仓库相对路径（target_dir 对应 comfyui_format/）
+    # 大小按 ModelScope API 核对（2026-08-27，与本地已下载文件一致）
+    - id: ltx25-comfyui-components
+      role: main
+      filename: text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors   # 标志文件（Gemma TE，最大权重）
+      target_dir: video/ltx25/comfyui_format
+      format: marker
+      required_for: [LTX/LTX-2.5-GGUF-Q8, LTX/LTX-2.5-GGUF-Q4]   # G8/G4 档 ltxv 原生管线使用
+      source:
+          type: huggingface
+          repo_id: Lightricks/LTX-2.5
+          # 仓库根 URL（无 /resolve/main/ 子路径）→ subdir_prefix 为空，
+          # key_files 本地路径 = 远端仓库相对路径
+          url: https://huggingface.co/Lightricks/LTX-2.5
+          # v0.2.15+ mirror_url 指向 ModelScope 镜像（LTX-2.5 仓库 gated，
+          # HF 匿名不可下；ModelScope 完整镜像实测匿名可下 + Range 206 断点续传）
+          mirror_url: https://modelscope.cn/models/Lightricks/LTX-2.5
+      # key_files 按仓库真实文件列表核对（2026-08-27，hf-mirror tree API +
+      # ModelScope files API 双源核对，大小与本地实测一致）：
+      #   - text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors（26263858182B = 24.5GiB）
+      #   - vae/ltx-2.5-video-vae-conv-bf16.safetensors（1452269922B）← VideoDecoder/VideoUpsampler 用（conv 版）
+      #   - vae/ltx-2.5-audio-vae-bf16.safetensors（364866540B）← AudioDecoder + vocoder 用
+      #   - latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors（995778752B）← Stage 2 空间上采样用
+      #   未声明（ltxv_native.py 不使用的仓库内容）：
+      #     - vae/ltx-2.5-video-vae-bf16.safetensors（非 conv 版，本地已存在但未使用）
+      #     - diffusion_models/*（LTXV 原生格式 transformer，G8 档用 GGUF 仓库替代）
+      #     - text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors
+      #       （int8 量化 TE，T4.5 低显存档扩展时启用）
+      #     - loras/ / model_patches/（LoRA 微调 / duration head，v1 不用）
+      key_files:
+        - text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors
+        - vae/ltx-2.5-video-vae-conv-bf16.safetensors
+        - vae/ltx-2.5-audio-vae-bf16.safetensors
+        - latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors
+      description: "LTX-2.5 ComfyUI 格式组件（Gemma4 with-proj TE + video VAE conv + audio VAE + latent 空间上采样器，G8 档 ltxv 原生管线用，~29.1GB；gated 仓库需 HF Token，ModelScope 镜像免 Token）"
+
+    # ============================================================
+    # 5. DFRPipeline 可选组件（P1-A：帧间补帧 + 多宫格参考，非必需）
+    # ============================================================
+    # 以下文件仅在 workflow=multi_reference_v（多宫格参考）或
+    # temporal_upscalings > 0（帧间补帧）时才需要；缺失时自动降级到
+    # P0 原生 blocks 组合路径，不阻断启动
+    - id: ltx25-detailing-lora
+      role: lora
+      optional: true
+      filename: ltx-2.5-detailing-lora.safetensors
+      target_dir: video/ltx25/dfr_format
+      format: safetensors
+      size_bytes: 200000000
+      required_for: []   # 可选：不阻断任何 variant 启动
+      optional_dependency_for: [multi_reference_v]
+      source:
+          type: huggingface
+          repo_id: Lightricks/LTX-2.5
+          url: https://huggingface.co/Lightricks/LTX-2.5/resolve/main/loras/ltx-2.5-detailing-lora.safetensors
+          mirror_url: https://modelscope.cn/models/Lightricks/LTX-2.5/resolve/main/loras/ltx-2.5-detailing-lora.safetensors
+      description: "LTX-2.5 DFR detailing LoRA（~200MB，DFRPipeline Stage 2 精修细节用；缺失时引擎自动降级到原生 blocks 路径，不阻断启动）"
+
+    - id: ltx25-temporal-upsampler
+      role: upscale
+      optional: true
+      filename: ltx-2.5-temporal-upsampler-x2-bf16.safetensors
+      target_dir: video/ltx25/dfr_format
+      format: safetensors
+      size_bytes: 500000000
+      required_for: []   # 可选：不阻断任何 variant 启动
+      optional_dependency_for: [temporal_upscalings]
+      source:
+          type: huggingface
+          repo_id: Lightricks/LTX-2.5
+          url: https://huggingface.co/Lightricks/LTX-2.5/resolve/main/latent_upscale_models/ltx-2.5-temporal-upsampler-x2-bf16.safetensors
+          mirror_url: https://modelscope.cn/models/Lightricks/LTX-2.5/resolve/main/latent_upscale_models/ltx-2.5-temporal-upsampler-x2-bf16.safetensors
+      description: "LTX-2.5 temporal 上采样器（~500MB，DFRPipeline 帧间补帧用，2× temporal upscaling；缺失时 temporal_upscalings 参数自动忽略）"
+
+    - id: ltx25-duration-head
+      role: main
+      optional: true
+      filename: ltx-2.5-duration-head-bf16.safetensors
+      target_dir: video/ltx25/dfr_format
+      format: safetensors
+      size_bytes: 5000000
+      required_for: []   # 可选：不阻断任何 variant 启动
+      optional_dependency_for: [auto_duration]
+      source:
+          type: huggingface
+          repo_id: Lightricks/LTX-2.5
+          url: https://huggingface.co/Lightricks/LTX-2.5/resolve/main/model_patches/ltx-2.5-duration-head-bf16.safetensors
+          mirror_url: https://modelscope.cn/models/Lightricks/LTX-2.5/resolve/main/model_patches/ltx-2.5-duration-head-bf16.safetensors
+      description: "LTX-2.5 duration head（~5MB，DFRPipeline 自动时长预测用；缺失时 auto_duration 降级为手动时长，不阻断 DFRPipeline 启动）"

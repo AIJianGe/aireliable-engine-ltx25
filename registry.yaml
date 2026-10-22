@@ -1,0 +1,50 @@
+# ============================================================
+# LTX-2.5 Video 引擎注册片段
+# ------------------------------------------------------------
+# 用途：
+#   - 导入 .airengine 包时由 EngineImporter 拷贝到
+#     config/engines/<engine_id>.yaml
+#   - 此文件是导入/卸载流程的核心数据来源
+#   - 字段含义详见 PR/development-guide.md §20.2
+#
+# v0.2.1 决策 G：manifest.models → registry 同步
+#   - 模型相关字段（model_layout / variants / model_files / loras）
+#     已迁移到 manifest.yaml 的 models 块，此文件仅保留部署字段
+#   - registry_loader 加载时从 engines/<engine_id>/manifest.yaml
+#     合并 models 块到顶层（向后兼容旧 v0.2 core）
+#
+# 必须遵守的约束：
+#   1. 文件名必须为 <engine_id>.yaml（与文件内 engine_id 字段一致）
+#   2. deployment.local_config.uv_env 必须指向 envs/<env_name>
+#   3. variant 内的 uv_env 必须与 deployment.local_config.uv_env 一致
+# ============================================================
+
+# ===== 必需字段 =====
+engine_id: ltx25_video_b9c4d2e1            # 必须与文件名一致，小写下划线
+engine_name: LTX-2.5 Video                 # UI 显示名
+capability: text-to-video                  # 能力类别
+type: video                               # 引擎类型
+
+# ===== 部署模式 =====
+deployment:
+    mode: local                           # local | remote
+    local_config:
+        port: 7008                        # 引擎监听端口（7001-7099，避免冲突）
+        uv_env: envs/video-ltx25           # uv 环境路径（卸载时定位 envs/ 目录）
+        startup_cmd: "python -m engines.ltx25_video_b9c4d2e1.server --port 7008"
+        # 引擎进程环境变量（可选）
+        # v0.2.1：EngineImporter 会自动同步 manifest.models.model_layout.base 到
+        #         AIRELIABLE_MODEL_LAYOUT_BASE 环境变量（双源真相消除，详见 §16.7）
+        env: {}
+    remote_config:                        # v0.3 启用远程引擎
+        url: ""
+        auth_token: ""
+
+# ===== 默认驻留级别 =====
+# hot  : 进程在 + 模型在显存（常用引擎）
+# warm : 进程在 + 模型未加载（启动时勾选的引擎默认级别）
+# cold : 进程未启动（按需启动，大模型引擎推荐）
+# LTX-2.5 22B 模型显存需求大（FP16 档 48GB / INT8、GGUF-Q8 档 24GB+），
+# 推荐 cold 按需启动（与 MiniMax-H3 同策略；健康检查超时由
+# engine_manager.HEALTH_CHECK_TIMEOUT=300s 全局保障，见 v0.3.9+ 注释）
+default_residency: cold

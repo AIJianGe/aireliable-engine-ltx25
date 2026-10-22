@@ -1,0 +1,36 @@
+# 缓存 / 虚拟环境
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.log
+*.tmp
+*.bak
+
+# 运行时输出
+output/
+.data/
+
+# 模型权重（D8：不入库，按需下载）
+*.gguf
+*.safetensors
+*.pth
+*.pt
+*.onnx
+*.bin
+*.ckpt
+*.pkl
+*.h5
+*.npz
+*.npy
+
+# 第三方二进制 / 压缩包（D8：不入库）
+backend/ffmpeg/
+gfpgan/
+*.zip
+*.7z
+
+# 敏感信息
+.env
