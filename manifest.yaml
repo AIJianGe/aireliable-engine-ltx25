@@ -60,7 +60,7 @@
 # ===== v0.1 必需字段 =====
 engine_id: ltx25_video_b9c4d2e1
 engine_name: LTX-2.5 Video
-engine_version: 0.1.0
+engine_version: 1.0.0
 aireliable_compat: ">=0.0.16"
 uv_env_name: video-ltx25
 export_mode: source
@@ -100,8 +100,8 @@ source:
 
 # 升级信息
 upgrade:
-  check_url: https://api.github.com/repos/Lightricks/LTX-2/releases/latest
-  auto_check: false
+  check_url: https://api.github.com/repos/AIJianGe/aireliable-engine-ltx25/releases/latest
+  auto_check: true
 
 # 节点包依赖（integrated 范式不依赖节点包）
 node_packages: []
