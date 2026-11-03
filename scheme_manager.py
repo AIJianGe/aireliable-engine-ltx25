@@ -21,6 +21,9 @@ from typing import Optional
 
 import yaml
 
+# 任务 71：设备探测统一走 SDK（平台与引擎同一份事实源）
+from aireliable_engine.device import device_info as _sdk_device_info
+
 
 # ===== 默认方案选择阈值（GB）=====
 # 按显存自动选档策略（LTX25_ENGINE_INTEGRATION_ANALYSIS.md §7.1.6 + M4-T4.2）：
@@ -370,27 +373,9 @@ class SchemeManager:
 def _detect_gpu_vram_gb() -> float:
     """检测当前 GPU 显存（GB），无 GPU 或检测失败返回 0.0。
 
-    与 config.py 的 _detect_gpu_vram_gb 实现一致，避免循环依赖。
+    任务 71：委托 SDK ``device.device_info``（与 config.py 同一数据源）。
     """
-    # 优先用 torch
     try:
-        import torch
-        if torch.cuda.is_available():
-            total_bytes = torch.cuda.get_device_properties(0).total_memory
-            return total_bytes / (1024 ** 3)
+        return _sdk_device_info(mode="auto").total_vram_gb or 0.0
     except Exception:
-        pass
-
-    # fallback：nvidia-smi
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return float(result.stdout.strip().splitlines()[0].strip()) / 1024
-    except Exception:
-        pass
-
-    return 0.0
+        return 0.0

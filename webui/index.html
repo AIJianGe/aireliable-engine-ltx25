@@ -188,6 +188,11 @@
   LTX-2.5 Video Engine · 四档量化（FP16 / INT8 / GGUF-Q8_0 / GGUF-Q4_K_M）· 引擎直连模式（/ui → 7008）
 </footer>
 
+<!-- 模型清单（SDK 共享组件：GET /models，与平台「引擎详情 → 模型管理」同口径） -->
+<section id="model-inventory-wrap" style="width:calc(100% - 32px);max-width:1280px;margin:16px auto;padding:10px 16px;box-sizing:border-box;border:1px solid rgba(128,128,128,.25);border-radius:10px;background:rgba(128,128,128,.05);">
+  <div id="sdk-model-inventory"></div>
+</section>
+<script src="/sdk/model-inventory.js?v=0.5.0"></script>
 <script src="app.js?v=4"></script>
 </body>
 </html>

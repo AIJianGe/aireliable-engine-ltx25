@@ -27,6 +27,10 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# 任务 71：设备探测统一走 SDK（平台与引擎同一份事实源）
+from aireliable_engine import EngineConfig as BaseEngineConfig
+from aireliable_engine.device import device_info as _sdk_device_info
+
 
 # ===== 常量 =====
 
@@ -79,67 +83,32 @@ DEVICE_POLICIES = ("auto", "gpu", "gpu+cpu", "cpu")
 def _detect_gpu_vram_gb() -> float:
     """检测当前 GPU 显存（GB），无 GPU 或检测失败返回 0.0。
 
-    优先使用 torch.cuda，失败时尝试 nvidia-smi。
+    任务 71：委托 SDK ``device.device_info``（有 core 时走平台权威值，
+    否则本地多源探测），不再手写 torch / nvidia-smi 双份兜底。
     """
-    # 优先用 torch
     try:
-        import torch
-        if torch.cuda.is_available():
-            # 取第一块 GPU 的总显存
-            total_bytes = torch.cuda.get_device_properties(0).total_memory
-            return total_bytes / (1024 ** 3)
+        return _sdk_device_info(mode="auto").total_vram_gb or 0.0
     except Exception:
-        pass
-
-    # fallback：nvidia-smi（Windows / Linux 均可用）
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            # 取第一块 GPU 的显存（MB → GB）
-            return float(result.stdout.strip().splitlines()[0].strip()) / 1024
-    except Exception:
-        pass
-
-    return 0.0
+        return 0.0
 
 
 @dataclass
-class EngineConfig:
+class EngineConfig(BaseEngineConfig):
     """LTX-2.5 视频生成引擎运行配置。
 
     通过环境变量 + 命令行参数构造。
     """
 
-    # ===== 基础 =====
+    # ===== 基础（身份 / 端口默认值由本引擎覆盖，其余公共字段见基类）=====
     engine_id: str = ENGINE_ID
     engine_name: str = ENGINE_NAME
     capability: str = CAPABILITY
     engine_type: str = ENGINE_TYPE
     port: int = DEFAULT_PORT
-    host: str = "127.0.0.1"
-
-    # ===== 路径 =====
-    models_root: Path = Path("models")
-    data_root: Path = Path("data")
-    project_root: Path = Path(".")
-    # v0.2.5+ 输出文件根目录统一为 output（项目顶层目录）
-    # 规范：{project_root}/output/{category}/{filename}
-    output_root: Path = Path("output")
 
     # ===== 推导路径 =====
     model_dir: Path = field(init=False)
     log_dir: Path = field(init=False)
-
-    # ===== 设备 =====
-    # auto: 自动检测 GPU / cpu: 强制 CPU / cuda:0: 指定 GPU
-    device: str = "auto"
-
-    # ===== 日志 =====
-    log_level: str = "INFO"
 
     # ===== CPU offload =====
     # auto: 根据 GPU 显存自动选择级别（resolve_offload_level 解析）
@@ -149,7 +118,7 @@ class EngineConfig:
     # ===== 设备策略（v0.3.5+）=====
     # 平台通过 AIRELIABLE_DEVICE_POLICY 环境变量注入（UI 设置 > yaml > 默认 auto）。
     # 映射规则见 parse_args：gpu→L0 / gpu+cpu→auto（显存分级）/ cpu→device=cpu
-    device_policy: str = "auto"
+    # 默认 "auto" 由基类 EngineConfig 提供。
 
     def __post_init__(self) -> None:
         """推导子路径。"""

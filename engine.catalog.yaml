@@ -1,0 +1,44 @@
+# 开源引擎中心展示元数据（任务 80 / T4.1）
+schema: 1
+engine_id: ltx25_video_b9c4d2e1
+
+name:
+  zh: "LTX-2.5 视频生成"
+  en: "LTX-2.5 Video"
+
+description:
+  zh: "LTX-2.5 视频生成引擎：22B 双流 DiT，原生音视频同步生成，四档精度适配不同显存。"
+  en: "LTX-2.5 video generation engine built on a 22B dual-stream DiT with native synchronized audio-video output and four precision tiers."
+
+category: video
+tags:
+  - text-to-video
+  - image-to-video
+  - audio-video
+
+repository:
+  github: AIJianGe/aireliable-engine-ltx25
+  gitee: AIJianGe/aireliable-engine-ltx25
+
+cover: catalog/covers/ltx25_video_b9c4d2e1.webp
+
+requirements:
+  python: ">=3.10,<3.13"
+  torch: ">=2.5.0"
+  gpu: required
+
+license: PolyForm-Noncommercial-1.0.0
+
+description_long:
+  zh: |-
+    LTX-2.5 基于 22B 双流 DiT，在一次生成中同时产出画面与同步音轨，省去后期对齐音画；支持文生视频与图生视频两种输入。
+
+    目录提供四档精度，按显存从宽到紧依次覆盖；首次运行会按需下发权重，之后本地加载。长时长、高分辨率与带音频生成会同时抬升显存与耗时。
+
+    需要 NVIDIA GPU 与 torch >= 2.5.0。需要原生同步音频、又不想二次配音的短片与广告场景优先选择本引擎。
+  en: |-
+    LTX-2.5 is built on a 22B dual-stream DiT and produces picture and synchronised audio in a single pass, removing manual audio-video alignment. It accepts both text-to-video and image-to-video inputs.
+
+    Four precision tiers cover a range of VRAM budgets; weights are delivered on first run and loaded locally afterwards. Longer duration, higher resolution and audio generation all raise VRAM usage and runtime.
+
+    An NVIDIA GPU and torch >= 2.5.0 are required. It is the first choice for short films and ads that need native synchronised audio without a separate dubbing pass.

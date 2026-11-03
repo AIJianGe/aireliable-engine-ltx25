@@ -47,6 +47,9 @@ from typing import Optional
 
 from .scheme_manager import SchemeConfig
 
+# 任务 71：设备探测统一走 SDK（平台与引擎同一份事实源）
+from aireliable_engine.device import resolve_device as _sdk_resolve_device
+
 logger = logging.getLogger(__name__)
 
 
@@ -237,7 +240,7 @@ class LTX25Wrapper:
         )
 
     def _resolve_device(self, device: str) -> str:
-        """解析设备字符串为具体值。
+        """解析设备字符串（任务 71：委托 SDK ``device.resolve_device``）。
 
         Args:
             device: auto / cpu / cuda:0
@@ -245,18 +248,9 @@ class LTX25Wrapper:
         Returns:
             具体设备字符串（cuda:0 或 cpu）
         """
-        if device == "cpu":
-            return "cpu"
-        if device.startswith("cuda"):
+        if device != "auto":
             return device
-        # auto：检测 CUDA 可用性
-        try:
-            import torch
-            if torch.cuda.is_available():
-                return "cuda:0"
-        except Exception:
-            pass
-        return "cpu"
+        return _sdk_resolve_device("auto", cuda_index=0)
 
     def _check_files_integrity(self, scheme: SchemeConfig) -> None:
         """校验模型文件完整性（不下载，只校验，遵循 project-rules.md §2）。
